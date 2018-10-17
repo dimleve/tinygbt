@@ -20,7 +20,7 @@ except ImportError:
     LARGE_NUMBER = sys.maxsize
 
 import numpy as np
-
+from sklearn.metrics import log_loss
 
 class Dataset(object):
     def __init__(self, X, y):
@@ -51,7 +51,7 @@ class TreeNode(object):
         Calculate the optimal weight of this leaf node.
         (Refer to Eq5 of Reference[1])
         """
-        return np.sum(grad) / (np.sum(hessian) + lambd)
+        return -np.sum(grad) / (np.sum(hessian) + lambd)
 
     def build(self, instances, grad, hessian, shrinkage_rate, depth, param):
         """
@@ -156,7 +156,7 @@ class GBT(object):
         if scores is None:
             grad = np.random.uniform(size=len(labels))
         else:
-            grad = np.array([2 * (labels[i] - scores[i]) for i in range(len(labels))])
+            grad = np.array([2 * (scores[i] - labels[i]) for i in range(len(labels))])
         return grad, hessian
 
     def _calc_gradient(self, train_set, scores):
@@ -173,12 +173,40 @@ class GBT(object):
         """For now, only L2 loss is supported"""
         return self._calc_l2_loss(models, data_set)
 
+    def sigmoid(self, input):
+        return 1.0 / (1.0 + np.exp(-input))
+
+    def logLikelihoodLoss(self, y_hat, y_true):
+        prob = self.sigmoid(y_hat)
+        grad = prob - y_true
+        hess = prob * (1.0 - prob)
+        return grad, hess
+
+    def _calc_log_loss_gradient(self, train_set, scores):
+        labels = train_set.y
+        if scores is None:
+            grad = np.random.uniform(size=len(labels))
+            hessian = np.random.uniform(size=len(labels))
+        else:
+            grad, hessian = self.logLikelihoodLoss(scores, labels)
+        return grad, hessian
+
+    def _calc_logloss_loss(self, models, data_set):
+        preds = []
+        for x, y in zip(data_set.X, data_set.y):
+            preds.append(self.predict(x, models))
+
+        return log_loss(data_set.y, self.sigmoid(np.array(preds)))
+
+    def _calc_log_loss(self, models, data_set):
+        return self._calc_logloss_loss(models, data_set)
+
     def _build_learner(self, train_set, grad, hessian, shrinkage_rate):
         learner = Tree()
         learner.build(train_set.X, grad, hessian, shrinkage_rate, self.params)
         return learner
 
-    def train(self, params, train_set, num_boost_round=20, valid_set=None, early_stopping_rounds=5):
+    def train(self, params, train_set, num_boost_round=20, valid_set=None, early_stopping_rounds=5, objective="regression"):
         self.params.update(params)
         models = []
         shrinkage_rate = 1.
@@ -191,16 +219,28 @@ class GBT(object):
         for iter_cnt in range(num_boost_round):
             iter_start_time = time.time()
             scores = self._calc_training_data_scores(train_set, models)
-            grad, hessian = self._calc_gradient(train_set, scores)
+            if objective in "regression":
+                grad, hessian = self._calc_gradient(train_set, scores)
+            elif objective in "binary":
+                grad, hessian = self._calc_log_loss_gradient(train_set, scores)
             learner = self._build_learner(train_set, grad, hessian, shrinkage_rate)
             if iter_cnt > 0:
                 shrinkage_rate *= self.params['learning_rate']
             models.append(learner)
-            train_loss = self._calc_loss(models, train_set)
-            val_loss = self._calc_loss(models, valid_set) if valid_set else None
-            val_loss_str = '{:.10f}'.format(val_loss) if val_loss else '-'
-            print("Iter {:>3}, Train's L2: {:.10f}, Valid's L2: {}, Elapsed: {:.2f} secs"
+
+            if objective in "regression":
+                train_loss = self._calc_loss(models, train_set)
+                val_loss = self._calc_loss(models, valid_set) if valid_set else None
+                val_loss_str = '{:.10f}'.format(val_loss) if val_loss else '-'
+                print("Iter {:>3}, Train's L2: {:.10f}, Valid's L2: {}, Elapsed: {:.2f} secs"
                   .format(iter_cnt, train_loss, val_loss_str, time.time() - iter_start_time))
+            elif objective in "binary":
+                train_loss = self._calc_log_loss(models, train_set)
+                val_loss = self._calc_log_loss(models, valid_set) if valid_set else None
+                val_loss_str = '{:.10f}'.format(val_loss) if val_loss else '-'
+                print("Iter {:>3}, Train's LogLoss: {:.10f}, Valid's LogLoss: {}, Elapsed: {:.2f} secs"
+                      .format(iter_cnt, train_loss, val_loss_str, time.time() - iter_start_time))
+
             if val_loss is not None and val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_iteration = iter_cnt
