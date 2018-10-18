@@ -30,6 +30,10 @@ python example.py
 ### Features
 
 - For now, Regression with L2 loss supported only.
+- Added Binary Classification with Logarithmic Loss (cross-entropy) support 
+
+### Loss functions notes
+
 
 ### References
 
