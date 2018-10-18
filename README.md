@@ -34,6 +34,10 @@ python example.py
 
 ### Loss functions notes
 
+| Task | target | Loss Function | gradient | hessian |
+| --- | --- | --- | --- | --- |
+| Regression | continuous | (y-p)^2 | 2*(y-p) | 2 (const)
+| Classification | {0,1} | -(y log(p) + (1 - y) log(1 - p)) | p-y | p*(1-p)
 
 ### References
 
